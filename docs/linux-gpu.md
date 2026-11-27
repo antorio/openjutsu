@@ -4,6 +4,8 @@ Two scripts install and start the whole stack on one Linux machine with an NVIDI
 
 - `scripts/linux/setup.sh` installs everything. Running it again skips what is there and resumes interrupted downloads.
 - `scripts/linux/start.sh` starts ComfyUI (`127.0.0.1:8188`), the proxy (`127.0.0.1:8189`) and the app (`127.0.0.1:3000`) in the background and waits until each answers. `start.sh stop` stops them. Logs and process ids are in `$OPENJUTSU_HOME/logs`.
+- `scripts/linux/check.mjs` asks the running app, as a browser would, whether every mode's custom nodes are registered, and lists the model files still missing: `node scripts/linux/check.mjs <app address> [password]`.
+- The **Linux setup** workflow (`.github/workflows/linux-setup.yml`) runs `setup.sh` twice and `start.sh` on Ubuntu 22.04, Colab's release, with a CPU PyTorch and a stub `nvidia-smi`, skips the model files over 700 MB, and runs `check.mjs` through the quick tunnel. It runs on every push that changes these scripts.
 
 Everything listens on loopback only. You reach the app through an SSH tunnel, or on Colab through a Cloudflare quick tunnel (`TUNNEL=cloudflared`), which requires `OPENJUTSU_PASSWORD`.
 
@@ -24,6 +26,7 @@ Everything listens on loopback only. You reach the app through an SSH tunnel, or
 | `WITH_FACE` | `1` | Fix faces packs and detectors (about 0.5 GB) |
 | `WITH_PICTURE` | `0` | From picture: FLUX 3 Klein, SolarRenderer, Metric3D (about 30 GB). Needs `HF_TOKEN` |
 | `SOLAR_RANK` | `384` | `64` downloads the smaller SolarRenderer pair; select it under From picture |
+| `MAX_MODEL_MB` | `0` | skip model files bigger than this many MB; `0` downloads all. For testing the install |
 | `HF_TOKEN` | | a Hugging Face read token. black-forest-labs gates FLUX 3 Klein: accept its licence first |
 | `PYTHON` | `python3` | the Python that runs ComfyUI. Where the system Python refuses pip, use a venv's |
 | `OPENJUTSU_PASSWORD` | | `start.sh`: required with a tunnel, 12+ characters, user `openjutsu` |

@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 75
     env:
-      OPENJUTSU_HOME: ${{ github.workspace }}/../home
+      OPENJUTSU_HOME: ${{ runner.temp }}/home
       MAX_MODEL_MB: "700"
       WITH_FACE: "1"
     steps:
@@ -82,6 +82,6 @@ jobs:
         with:
           name: linux-setup-logs
           path: |
-            ${{ github.workspace }}/../home/logs/
-            ${{ github.workspace }}/../home/build.log
+            ${{ runner.temp }}/home/logs/
+            ${{ runner.temp }}/home/build.log
           if-no-files-found: ignore

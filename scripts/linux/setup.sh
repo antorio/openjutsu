@@ -198,13 +198,17 @@ for entry in "${PACKS[@]}"; do
   fi
 done
 if [[ $WITH_FACE == 1 ]]; then
-  # InsightFace (identity matching in Fix faces) runs on ONNX Runtime. H3-FaceRefine's README warns that the CPU-only
-  # onnxruntime package, installed next to onnxruntime-gpu, shadows it and matching silently runs on the CPU.
+  # InsightFace (identity matching in Fix faces) runs on ONNX Runtime. insightface itself requires the CPU-only
+  # onnxruntime, which writes the same onnxruntime/ folder as onnxruntime-gpu; whichever was installed last wins, and
+  # H3-FaceRefine's README warns that the CPU files make matching silently run on the CPU. So check what is importable
+  # and put the GPU files back when the CUDA provider is missing.
   "$PYTHON" -m pip install -q onnxruntime-gpu -c "$CONSTRAINTS" || warn "onnxruntime-gpu failed to install; Fix faces needs it."
-  if "$PYTHON" -m pip show -q onnxruntime >/dev/null 2>&1; then
-    warn "The CPU-only onnxruntime package is installed too and may hide the GPU one. Remove it with: $PYTHON -m pip uninstall onnxruntime"
+  cuda_provider() { "$PYTHON" -c 'import onnxruntime as o, sys; sys.exit("CUDAExecutionProvider" not in o.get_available_providers())' 2>/dev/null; }
+  if ! cuda_provider; then
+    "$PYTHON" -m pip install -q --force-reinstall --no-deps onnxruntime-gpu -c "$CONSTRAINTS" || true
+    cuda_provider || warn "ONNX Runtime has no CUDA provider, so Fix faces matches faces on the CPU (slower)."
   fi
-  "$PYTHON" -c 'import onnxruntime as o; print("ONNX Runtime providers:", ", ".join(o.get_available_providers()))' || true
+  "$PYTHON" -c 'import onnxruntime as o; print("ONNX Runtime providers:", ", ".join(o.get_available_providers()))' 2>/dev/null || true
 fi
 if [[ $WITH_PICTURE == 1 ]]; then
   solar="$COMFYUI_DIR/custom_nodes/SolarRenderer"
