@@ -16,6 +16,7 @@
 #                   FLUX is gated: accept its licence at huggingface.co/black-forest-labs/flux-3-image-klein-comfy,
 #                   then set HF_TOKEN to a read token of that account.
 #   SOLAR_RANK=384  SolarRenderer LoRA pair: 384, or 64 for the smaller pair (select it under From picture)
+#   MAX_MODEL_MB=0  skip model files bigger than this many MB (0: download all); for testing the install without them
 #   PYTHON=python3  Python that runs ComfyUI. Where the system Python refuses pip installs, point it at a venv.
 set -euo pipefail
 
@@ -27,6 +28,7 @@ MODELS_DIR="${MODELS_DIR:-$COMFYUI_DIR/models}"
 WITH_FACE="${WITH_FACE:-1}"
 WITH_PICTURE="${WITH_PICTURE:-0}"
 SOLAR_RANK="${SOLAR_RANK:-384}"
+MAX_MODEL_MB="${MAX_MODEL_MB:-0}"
 PYTHON="${PYTHON:-python3}"
 PROXY_VERSION=0.1.6 # the comfy-api-proxy release patch_proxy.py is written for
 NODE_VERSION=22.23.5
@@ -105,22 +107,26 @@ fi
 log "Checking this machine"
 command -v nvidia-smi >/dev/null || die "No NVIDIA GPU found (nvidia-smi is missing). On Colab, choose Runtime > Change runtime type > L4 or A100."
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
-vram_mb=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1 | tr -d ' ')
+vram_mb=$(nvidia-smi --id=0 --query-gpu=memory.total --format=csv,noheader,nounits | tr -d ' ')
 ram_gb=$(awk '/MemTotal/ {printf "%d", $2 / 1048576}' /proc/meminfo)
 echo "System RAM: ${ram_gb} GB"
 ((vram_mb >= 15000)) || warn "The GPU has ${vram_mb} MB. Openjutsu was tested on 16 GB and may run out of memory."
 ((ram_gb >= 48)) || warn "${ram_gb} GB of system RAM is less than the H3 models need (tested with 64 GB); expect out-of-memory errors."
 
-mkdir -p "$OPENJUTSU_HOME" "$MODELS_DIR"
+skipped() { ((MAX_MODEL_MB > 0 && $1 > MAX_MODEL_MB)); }
+mkdir -p "$OPENJUTSU_HOME"
 missing_mb=0
 for entry in "${MODELS[@]}"; do
   IFS='|' read -r folder file _ _ mb _ <<<"$entry"
-  [[ -f "$MODELS_DIR/$folder/$file" ]] || missing_mb=$((missing_mb + mb))
+  [[ -f "$MODELS_DIR/$folder/$file" ]] || skipped "$mb" || missing_mb=$((missing_mb + mb))
 done
-free_mb=$(df -Pm "$MODELS_DIR" | awk 'NR == 2 {print $4}')
+# The models folder appears only once ComfyUI is checked out, so measure the nearest folder that exists.
+existing=$MODELS_DIR
+while [[ ! -d $existing ]]; do existing=$(dirname "$existing"); done
+free_mb=$(df -Pm "$existing" | awk 'NR == 2 {print $4}')
 # Python packages and caches need room too: about 15 GB on a fresh machine.
-[[ -d "$COMFYUI_DIR" ]] && extra_mb=3000 || extra_mb=15000
-echo "Models to download: $((missing_mb / 1000)) GB; free disk at $MODELS_DIR: $((free_mb / 1000)) GB"
+[[ -d "$COMFYUI_DIR/.git" ]] && extra_mb=3000 || extra_mb=15000
+echo "Models to download: $((missing_mb / 1000)) GB; free disk at $existing: $((free_mb / 1000)) GB"
 if ((free_mb < missing_mb + extra_mb)); then
   die "Not enough disk space: need about $(((missing_mb + extra_mb) / 1000)) GB, have $((free_mb / 1000)) GB. Turn off WITH_PICTURE, use SOLAR_RANK=64, or use a bigger disk."
 fi
@@ -139,21 +145,40 @@ if ((${#need[@]})); then
 fi
 
 log "ComfyUI $COMFYUI_REF"
+# Fetched into the folder rather than cloned, so a folder that already exists is filled in place and a newer
+# COMFYUI_REF replaces an older checkout. COMFYUI_REF must be a release tag.
 if [[ ! -d "$COMFYUI_DIR/.git" ]]; then
-  git clone -q --depth 1 --branch "$COMFYUI_REF" https://github.com/Comfy-Org/ComfyUI "$COMFYUI_DIR"
-else
-  echo "Already installed: $(git -C "$COMFYUI_DIR" describe --tags --always)"
+  mkdir -p "$COMFYUI_DIR"
+  git -C "$COMFYUI_DIR" init -q
+  git -C "$COMFYUI_DIR" remote add origin https://github.com/Comfy-Org/ComfyUI
 fi
+if [[ "$(git -C "$COMFYUI_DIR" describe --tags --exact-match 2>/dev/null)" != "$COMFYUI_REF" ]]; then
+  git -C "$COMFYUI_DIR" fetch -q --depth 1 origin "refs/tags/$COMFYUI_REF:refs/tags/$COMFYUI_REF"
+  git -C "$COMFYUI_DIR" checkout -q "$COMFYUI_REF"
+fi
+echo "ComfyUI $(git -C "$COMFYUI_DIR" describe --tags)"
 # A fresh checkout's models folder holds only placeholders, so it can become a link to MODELS_DIR.
 if [[ "$(realpath -m "$MODELS_DIR")" != "$(realpath -m "$COMFYUI_DIR/models")" ]]; then
   if [[ -d "$COMFYUI_DIR/models" && ! -L "$COMFYUI_DIR/models" ]]; then
-    find "$COMFYUI_DIR/models" -type f ! -name 'put_*_here' | grep -q . && die "$COMFYUI_DIR/models has model files. Move them into $MODELS_DIR first."
+    # -quit, not a pipe into grep -q: with pipefail, find killed by SIGPIPE would skip this guard.
+    [[ -n "$(find "$COMFYUI_DIR/models" -type f ! -name 'put_*_here' -print -quit)" ]] && die "$COMFYUI_DIR/models has model files. Move them into $MODELS_DIR first."
     rm -rf "$COMFYUI_DIR/models"
   fi
+  mkdir -p "$MODELS_DIR"
   ln -sfn "$MODELS_DIR" "$COMFYUI_DIR/models"
 fi
-# Custom node requirements must not replace the installed PyTorch build (Colab's matches its CUDA driver).
-"$PYTHON" -m pip freeze 2>/dev/null | grep -iE '^(torch|torchvision|torchaudio)==' >"$CONSTRAINTS" || true
+mkdir -p "$MODELS_DIR"
+# Custom node requirements must not replace the installed PyTorch build (Colab's matches its CUDA driver). Versions come
+# from the installed packages, since pip freeze lists a build installed from a URL as "torch @ <url>".
+"$PYTHON" - >"$CONSTRAINTS" <<'EOF'
+from importlib import metadata
+for name in ("torch", "torchvision", "torchaudio"):
+    try:
+        print(f"{name}=={metadata.version(name)}")
+    except metadata.PackageNotFoundError:
+        pass
+EOF
+echo "Keeping: $(tr '\n' ' ' <"$CONSTRAINTS")"
 "$PYTHON" -m pip install -q -r "$COMFYUI_DIR/requirements.txt" -c "$CONSTRAINTS"
 
 log "Custom nodes"
@@ -191,8 +216,14 @@ if [[ $WITH_PICTURE == 1 ]]; then
 fi
 
 log "comfy-api-proxy $PROXY_VERSION"
-if [[ ! -x "$VENV/bin/python" ]]; then
-  "$PYTHON" -m venv "$VENV" 2>/dev/null || { "$PYTHON" -m pip install -q virtualenv && "$PYTHON" -m virtualenv -q "$VENV"; }
+# A venv made without ensurepip (Debian's python3 without python3-venv) has no pip; virtualenv brings its own.
+if ! "$VENV/bin/python" -m pip --version >/dev/null 2>&1; then
+  rm -rf "$VENV"
+  if ! { "$PYTHON" -m venv "$VENV" 2>/dev/null && "$VENV/bin/python" -m pip --version >/dev/null 2>&1; }; then
+    rm -rf "$VENV"
+    "$PYTHON" -m pip install -q virtualenv
+    "$PYTHON" -m virtualenv -q "$VENV"
+  fi
 fi
 "$VENV/bin/python" -m pip install -q "comfy-api-proxy==$PROXY_VERSION" "huggingface_hub[hf_xet]"
 "$VENV/bin/python" "$REPO_DIR/patch_proxy.py"
@@ -202,6 +233,10 @@ for entry in "${MODELS[@]}"; do
   IFS='|' read -r folder file source path mb alias <<<"$entry"
   dest="$MODELS_DIR/$folder/$file"
   mkdir -p "$MODELS_DIR/$folder"
+  if [[ ! -f $dest ]] && skipped "$mb"; then
+    echo "skip $folder/$file ($mb MB, over MAX_MODEL_MB)"
+    continue
+  fi
   if [[ -f $dest ]]; then
     echo "have $folder/$file"
   else

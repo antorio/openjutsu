@@ -1,0 +1,87 @@
+name: Linux setup
+
+# Runs scripts/linux/setup.sh and start.sh on Ubuntu 22.04 (Colab's release) with a CPU PyTorch standing in for
+# Colab's preinstalled one and a stub nvidia-smi, skipping the model files over 700 MB. Then it checks, through the
+# Cloudflare quick tunnel as a browser would, that every mode's custom nodes are registered.
+on:
+  push:
+    paths:
+      - scripts/linux/**
+      - notebooks/**
+      - patch_proxy.py
+      - patches/**
+      - .github/workflows/linux-setup.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    env:
+      OPENJUTSU_HOME: ${{ github.workspace }}/../home
+      MAX_MODEL_MB: "700"
+      WITH_FACE: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Make room on the runner
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Stand in for Colab (CPU PyTorch, stub nvidia-smi), and a password for the tunnel
+        run: |
+          password=$(openssl rand -hex 16)
+          echo "::add-mask::$password"
+          echo "OPENJUTSU_PASSWORD=$password" >>"$GITHUB_ENV"
+          python -m pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+          mkdir -p "$HOME/stub"
+          printf '%s\n' '#!/bin/sh' 'case "$*" in *nounits*) echo 23034 ;; *) echo "NVIDIA L4 (stub), 23034 MiB, 580.82.07" ;; esac' >"$HOME/stub/nvidia-smi"
+          chmod +x "$HOME/stub/nvidia-smi"
+          echo "$HOME/stub" >>"$GITHUB_PATH"
+
+      - name: setup.sh
+        run: bash scripts/linux/setup.sh
+
+      - name: setup.sh again (nothing left to do)
+        run: bash scripts/linux/setup.sh
+
+      - name: start.sh with a quick tunnel
+        env:
+          COMFYUI_ARGS: --cpu
+          TUNNEL: cloudflared
+        run: bash scripts/linux/start.sh
+
+      - name: Every custom node pack imported
+        run: |
+          log="$OPENJUTSU_HOME/logs/comfyui.log"
+          sed -n '/Import times for custom nodes/,/^$/p' "$log"
+          if grep -n "IMPORT FAILED" "$log"; then exit 1; fi
+
+      - name: Check every mode through the tunnel
+        env:
+          REQUIRED_MODELS: face_yolov8m.pt person_yolov8m-seg.pt sam_vit_b_01ec64.pth minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors minimax_h3_audio_vae_fp32.safetensors
+        run: |
+          export PATH="$OPENJUTSU_HOME/node/bin:$PATH"
+          node scripts/linux/check.mjs "$(cat "$OPENJUTSU_HOME/logs/tunnel.url")" "$OPENJUTSU_PASSWORD"
+
+      - name: start.sh stop
+        if: always()
+        run: bash scripts/linux/start.sh stop
+
+      - name: Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-setup-logs
+          path: |
+            ${{ github.workspace }}/../home/logs/
+            ${{ github.workspace }}/../home/build.log
+          if-no-files-found: ignore
