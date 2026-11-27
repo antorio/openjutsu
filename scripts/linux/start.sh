@@ -55,14 +55,17 @@ wait_http() {
 }
 
 if [[ ${1:-} == stop ]]; then
+  stopped=0
   for name in tunnel app proxy comfyui; do
     if running "$name"; then
       pid=$(cat "$LOGS/$name.pid")
       kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
       echo "stopped $name"
+      stopped=1
     fi
     rm -f "$LOGS/$name.pid"
   done
+  ((stopped)) || echo "Nothing was running."
   exit 0
 fi
 
