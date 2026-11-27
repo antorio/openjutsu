@@ -21,7 +21,6 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 75
     env:
-      OPENJUTSU_HOME: ${{ runner.temp }}/home
       MAX_MODEL_MB: "700"
       WITH_FACE: "1"
     steps:
@@ -38,6 +37,7 @@ jobs:
 
       - name: Stand in for Colab (CPU PyTorch, stub nvidia-smi), and a password for the tunnel
         run: |
+          echo "OPENJUTSU_HOME=$RUNNER_TEMP/home" >>"$GITHUB_ENV"
           password=$(openssl rand -hex 16)
           echo "::add-mask::$password"
           echo "OPENJUTSU_PASSWORD=$password" >>"$GITHUB_ENV"
@@ -82,6 +82,6 @@ jobs:
         with:
           name: linux-setup-logs
           path: |
-            ${{ runner.temp }}/home/logs/
-            ${{ runner.temp }}/home/build.log
+            ${{ env.OPENJUTSU_HOME }}/logs/
+            ${{ env.OPENJUTSU_HOME }}/build.log
           if-no-files-found: ignore
