@@ -51,6 +51,7 @@ Install these into `ComfyUI/custom_nodes` (ComfyUI Manager finds the first three
 | [comfyui-h3-oneclick-swap](https://github.com/D3voz/comfyui-h3-oneclick-swap) | swap and object plans, people and role masks, grey mannequins, track labelling, cut finder, shot list, face-fix chunks |
 | [ComfyUI-H3-FaceRefine](https://github.com/Carasibana/ComfyUI-H3-FaceRefine) | Fix faces: face tracking and cropping, SAM face masks, pasting back |
 | [ComfyUI-Impact-Pack](https://github.com/ltdrdata/ComfyUI-Impact-Pack) | Fix faces: SAM loader |
+| [ComfyUI-Impact-Subpack](https://github.com/ltdrdata/ComfyUI-Impact-Subpack) | Fix faces: registers `models/ultralytics`, so the face detectors are listed |
 | [comfyui-image-detail-contrast](https://github.com/D3voz/comfyui-image-detail-contrast) | Fix colours: Image Detail Contrast |
 | [Orion4D_FXMax](https://github.com/orion4d/Orion4D_FXMax) | Fix colours: DCTL Tone Mapper and its presets |
 | [comfyui-websocket-reconnect-fix](https://github.com/D3voz/comfyui-websocket-reconnect-fix) | every job: keeps live progress coming after the proxy reconnects to ComfyUI (adds no nodes) |
@@ -156,6 +157,10 @@ Object swap uses the same masked edit for the tracked things; SAM 3 tracks each 
 Fix faces works on the face, not the frame. H3 Face Track + Crop follows the face of the person in the photo over the whole video (InsightFace picks them out when there are several) and crops it to 512×512, so a face a few dozen pixels tall fills the canvas. H3 Face Fix Chunks splits the crops into independent chunks (6.5 s by default, overlapping by at least 1 s) and outputs them as lists, so ComfyUI runs the H3 nodes once per chunk. Each chunk is a masked edit: only the SAM face mask is regenerated with the photo as reference, while the hair, ears, collar and background around it stay, which keeps the new face from sliding against the head. For Follow the mouth, a blurred copy of the crop is the motion reference. H3 Face Fix Join crossfades the chunk overlaps and lowers the per-frame paste weight where the face is large, and H3 Face Stitch pastes the face back through a slightly smaller mask with the original soundtrack. The chunks are not chained through the context loop: each one starts from the swap's own frames, so colours do not drift. `lib/face.ts` removes the blurred face for Match the photo and sets the seed and chunk length.
 
 The swap workflows are built by the scripts in `workflows/build/`: `oneclick_single_build.js` (Simple), `oneclick_advanced_build.js` (Advanced; set `globalThis.H3_MAX_QUALITY = true` first for One pass per person), and `oneclick_object_build.js`. To rebuild one, open ComfyUI in the browser with an empty workflow tab (each script clears the active tab), run `const app = window.comfyAPI.app.app;` in the developer console, paste the script, enable its optional groups (hat fix, No lip-sync) where the export needs them, export **Workflow (API)** and replace the matching `workflows/*.api.json`. Fix faces is written by `python workflows/build/openjutsu_face_build.py`. If node ids change, update `NODES` in `lib/simple.ts`. `npm test` checks the pruning against the exports.
+
+## Run it on a Linux GPU (Colab, RunPod, Vast.ai)
+
+Without an NVIDIA GPU of your own, `scripts/linux/setup.sh` installs ComfyUI, the custom nodes, the models, the proxy and the app on a rented Linux GPU, and `scripts/linux/start.sh` starts them. `notebooks/openjutsu_colab.ipynb` runs both on Google Colab. They have not been run end to end yet. See [docs/linux-gpu.md](docs/linux-gpu.md) for the requirements, the model sources and Colab's limits.
 
 ## Deploy on the Comfy Developer Platform
 

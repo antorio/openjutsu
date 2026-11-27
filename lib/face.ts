@@ -23,6 +23,25 @@ export function faceChunkCount(durationSeconds: number, chunkSeconds: number) {
   return total <= length ? 1 : Math.ceil((total - OVERLAP) / (length - OVERLAP));
 }
 
+type NodeInputs = { required?: Record<string, unknown[]>; optional?: Record<string, unknown[]> };
+
+// face.api.json was exported on Windows, so its detectors read bbox\face_yolov8m.pt, but ComfyUI accepts only the
+// spelling it lists, which is bbox/face_yolov8m.pt on Linux. The setup check already ignores the separator; this makes
+// the job match it. Without the node's inputs (ComfyUI did not answer), the names stay as exported.
+export function useInstalledDetectors(graph: ApiGraph, inputs: NodeInputs | undefined) {
+  const unified = (name: string) => name.replaceAll("\\", "/");
+  for (const node of Object.values(graph)) {
+    if (node.class_type !== "H3FaceTrackCrop") continue;
+    for (const input of ["detector", "fallback_detector"]) {
+      const name = node.inputs[input];
+      const options = (inputs?.required?.[input] ?? inputs?.optional?.[input])?.[0];
+      if (typeof name !== "string" || !Array.isArray(options)) continue;
+      const installed = options.find((option) => typeof option === "string" && unified(option) === unified(name));
+      if (typeof installed === "string") node.inputs[input] = installed;
+    }
+  }
+}
+
 export function pruneFace(source: ApiGraph, settings: FaceSettings): ApiGraph {
   const graph: ApiGraph = structuredClone(source);
   const id = (title: string) => nodeByTitle(graph, title);

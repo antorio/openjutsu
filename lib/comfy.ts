@@ -8,7 +8,7 @@ import { MASK_NODES, NODES, cropSource, isLink, pruneMask, pruneSimple, setSecti
 import { VIDEO, nodeByTitle, pruneAdvanced, type AdvancedSettings } from "./advanced.ts";
 import { applyDescriber, applyModel, type ModelFiles, type ModelSettings } from "./model.ts";
 import { OBJECT_PICTURE, OBJECT_VIDEO, pruneFit, pruneObject, type ObjectSettings, type PlacementKeyframe } from "./object.ts";
-import { FACE_PICTURE, FACE_VIDEO, pruneFace, type FaceSettings } from "./face.ts";
+import { FACE_PICTURE, FACE_VIDEO, pruneFace, useInstalledDetectors, type FaceSettings } from "./face.ts";
 import { COLOR_VIDEO, pruneColor, type ColorSettings } from "./color.ts";
 import { PEOPLE_NODES, peopleRoles, pruneMontage, type Review } from "./montage.ts";
 
@@ -197,6 +197,7 @@ export async function submitFit(video: StoredFile, section: Section, placement: 
 export async function submitFace(video: StoredFile, section: Section, picture: StoredFile, settings: FaceSettings, model: ModelSettings) {
   const comfy = client();
   const graph = pruneFace(await loadGraph("face"), settings);
+  useInstalledDetectors(graph, await comfyUi("/object_info/H3FaceTrackCrop", 8000).then((info) => info?.H3FaceTrackCrop?.input, () => undefined));
   applyModel(graph, model);
   setSection(graph, nodeByTitle(graph, FACE_VIDEO), section);
   const workflow = comfy.workflows.fromJson(graph);

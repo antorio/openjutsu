@@ -33,6 +33,11 @@ const SETTINGS_KEY = "openjutsu.settings";
 const WELCOME_KEY = "openjutsu.welcome";
 const HISTORY_KEY = "openjutsu.history";
 const HISTORY_LENGTH = 20;
+// How often a running job is polled: while its event stream delivers nothing, and once it does.
+const POLL_MS = 5_000;
+const POLL_LIVE_MS = 30_000;
+// How long the progress view waits for the event stream before saying it is not getting through.
+const LIVE_GRACE_MS = 15_000;
 
 const KIND_LABELS: Record<Kind, string> = {
   simple: "Person swap", mask: "Mask check", advanced: "Advanced swap", advanced_maxq: "Advanced swap", object: "Object swap", fit: "Fit check",
@@ -288,6 +293,8 @@ export function Openjutsu() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [preview, setPreview] = useState("");
   const [streamError, setStreamError] = useState("");
+  // live: the event stream has delivered something since the page started watching this job
+  const [stream, setStream] = useState({ live: false, since: 0 });
   const [now, setNow] = useState(Date.now());
   const [restored, setRestored] = useState(false);
 
@@ -371,13 +378,59 @@ export function Openjutsu() {
 
   useEffect(() => {
     if (!run) return;
+    let done = false;
+    let live = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const source = new EventSource(`/api/jobs/${run.id}/events?kind=${run.kind ?? "simple"}`);
+    const finish = () => {
+      done = true;
+      clearTimeout(timer);
+      source.close();
+    };
+    setStream({ live: false, since: Date.now() });
+    // Some tunnels, Cloudflare's quick tunnels among them, do not carry server-sent events, so the job is also polled:
+    // often while the stream has delivered nothing, rarely once it works, in case it stops before the job ends.
+    let polling = false;
+    let failures = 0;
+    const poll = async () => {
+      polling = true;
+      let ok = false;
+      try {
+        const response = await fetch(`/api/jobs/${run.id}`, { cache: "no-store" });
+        if (done) return;
+        if (response.status === 404) {
+          setJob({ id: run.id, status: "expired", queuePosition: null, error: null, video: null, data: null });
+          return finish();
+        }
+        if (response.ok) {
+          const next: PublicJob = await response.json();
+          if (done) return;
+          ok = true;
+          setJob(next);
+          if (TERMINAL.has(next.status)) return finish();
+        }
+      } catch {
+      } finally {
+        polling = false;
+      }
+      if (done) return;
+      failures = ok ? 0 : failures + 1;
+      // Without the stream, the poll is all the page has: say when it stops working too.
+      if (!live && ok) setStreamError("");
+      if (!live && failures === 3) setStreamError("Lost the connection to this job. Reload the page to try again, or go Back: the job keeps running in ComfyUI.");
+      timer = setTimeout(poll, live ? POLL_LIVE_MS : POLL_MS);
+    };
+    void poll();
     source.onmessage = (message) => {
+      if (!live) {
+        live = true;
+        setStream((current) => ({ ...current, live: true }));
+      }
       const event = JSON.parse(message.data);
       if (event.type === "job") {
         setJob(event.job);
         setStreamError("");
-        if (TERMINAL.has(event.job.status)) source.close();
+        if (TERMINAL.has(event.job.status)) finish();
       } else if (event.type === "status") {
         setJob((current) => current && { ...current, status: event.status, queuePosition: event.queuePosition });
       } else if (event.type === "progress" && event.node) {
@@ -391,11 +444,18 @@ export function Openjutsu() {
         setStreamError(event.message);
       }
     };
-    // An answer other than an event stream (401, 403, 500) ends the stream for good; a dropped connection is retried.
+    // An answer other than an event stream (401, 403, 500 or a tunnel's own error page) ends the stream for good, and a
+    // dropped connection is retried, which marks it live again once it delivers. Until then the job is polled often.
     source.onerror = () => {
-      if (source.readyState === EventSource.CLOSED) setStreamError("Lost the connection to this job. Reload the page to try again, or go Back: the job keeps running in ComfyUI.");
+      if (done) return;
+      live = false;
+      setStream((current) => ({ ...current, live: false }));
+      if (!polling) {
+        clearTimeout(timer);
+        timer = setTimeout(poll, POLL_MS);
+      }
     };
-    return () => source.close();
+    return finish;
   }, [run]);
 
   const running = !!run && !(job && TERMINAL.has(job.status));
@@ -762,7 +822,7 @@ export function Openjutsu() {
       )}
       {run ? (
         <RunView
-          run={run} job={job} progress={progress} preview={preview} streamError={streamError} now={now}
+          run={run} job={job} progress={progress} preview={preview} streamError={streamError} stream={stream} now={now}
           before={video && same ? { url: video.url, start: whole ? 0 : part.start } : null}
           onCancel={cancel} onReset={reset} onFix={fixResult} onGenerate={!video || !same || submitting ? null : mode === "simple" && character ? () => submit("simple") : run.kind === "fit" && ready ? () => submit("object") : null}
           onUseBox={video && same ? (box) => { setPlacement([{ frame: Math.round((whole ? 0 : part.start) * 24), ...box }]); reset(); } : null}
@@ -1196,8 +1256,8 @@ export function Openjutsu() {
   );
 }
 
-function RunView({ run, job, progress, preview, streamError, now, before, onCancel, onReset, onFix, onGenerate, onUseBox, margin, onMargin, onRecheck, photos, onMontage, frames, onRetry }: {
-  run: Run; job: PublicJob | null; progress: Progress | null; preview: string; streamError: string; now: number;
+function RunView({ run, job, progress, preview, streamError, stream, now, before, onCancel, onReset, onFix, onGenerate, onUseBox, margin, onMargin, onRecheck, photos, onMontage, frames, onRetry }: {
+  run: Run; job: PublicJob | null; progress: Progress | null; preview: string; streamError: string; stream: { live: boolean; since: number }; now: number;
   before: { url: string; start: number } | null;
   onCancel: () => void; onReset: () => void; onFix: (post: Post) => void; onGenerate: (() => void) | null;
   onUseBox: ((box: NonNullable<FitSummary["needed"]>) => void) | null;
@@ -1276,7 +1336,7 @@ function RunView({ run, job, progress, preview, streamError, now, before, onCanc
       <div className="row">
         <h2>{status === "queued" ? `Queued${job?.queuePosition ? ` (#${job.queuePosition})` : ""}` : people ? "Finding people" : run.kind === "fit" ? "Checking the fit" : mask ? "Checking the mask" : color ? "Fixing the colours"
           : face ? (sampling ? `Chunk ${chunk} of up to ${run.clips}` : chunk ? "Pasting the face back" : "Tracking the face")
-          : progress?.clip ? `Clip ${progress.clip} of ${clips > 1 || run.kind === "montage" ? "about " : ""}${clips}` : "Preparing"}</h2>
+          : progress?.clip ? `Clip ${progress.clip} of ${clips > 1 || run.kind === "montage" ? "about " : ""}${clips}` : status === "running" && !progress ? "Running" : "Preparing"}</h2>
         <span className="time">{elapsed(now - run.startedAt)}</span>
       </div>
       <div className="bar"><div style={{ width: `${Math.round(fraction * 100)}%` }} /></div>
@@ -1284,6 +1344,10 @@ function RunView({ run, job, progress, preview, streamError, now, before, onCanc
         {progress ? progress.title : status === "queued" ? "Waiting for ComfyUI…" : "Working…"}
         {progress?.steps ? ` · step ${progress.step ?? 0}/${progress.steps}` : ""}
       </p>
+      {!stream.live && !streamError && now - stream.since > LIVE_GRACE_MS && <p className="hint" role="status">
+        Live progress is not reaching this page, so steps, clips and mask previews do not show; some tunnels block it.
+        The status is checked every {POLL_MS / 1000} s, and the result appears here when the job ends.
+      </p>}
       {preview && <img className="preview" src={preview} alt="Mask preview: white areas are regenerated" />}
       {streamError && <div className="row">
         <p className="error">{streamError}</p>

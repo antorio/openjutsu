@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { nodeByTitle } from "../lib/advanced.ts";
-import { FACE_PICTURE, FACE_VIDEO, faceChunkCount, pruneFace, type FaceSettings } from "../lib/face.ts";
+import { FACE_PICTURE, FACE_VIDEO, faceChunkCount, pruneFace, useInstalledDetectors, type FaceSettings } from "../lib/face.ts";
 import { applyModel, DEFAULT_MODEL } from "../lib/model.ts";
 import { isLink, type ApiGraph } from "../lib/simple.ts";
 
@@ -42,6 +42,27 @@ test("the steps go to the Schedule and the LoRAs into the sampler model", () => 
   assert.equal(node(pruned, "Schedule").inputs.steps, 9);
   assert.deepEqual(node(pruned, "Comfy Kitchen Attention").inputs.model, [nodeByTitle(pruned, "H3 Diffusion Model"), 0]);
   assert.deepEqual(dangling(pruned), []);
+});
+
+test("detectors take the spelling ComfyUI lists, so a Linux install accepts the Windows export", () => {
+  const detectors = (g: ApiGraph) => Object.values(g).filter((n) => n.class_type === "H3FaceTrackCrop").map((n) => [n.inputs.detector, n.inputs.fallback_detector]);
+  assert.deepEqual(detectors(graph), [["bbox\\face_yolov8m.pt", "segm\\person_yolov8m-seg.pt"], ["bbox\\face_yolov8m.pt", "none"]]);
+  const linux = pruneFace(graph, settings("mouth"));
+  // FaceRefine lists Impact Subpack's ultralytics_bbox names first, then the ultralytics folder's.
+  const listed = ["face_yolov8m.pt", "bbox/face_yolov8m.pt", "segm/person_yolov8m-seg.pt"];
+  useInstalledDetectors(linux, { required: { detector: [listed] }, optional: { fallback_detector: [["none", ...listed]] } });
+  assert.deepEqual(detectors(linux), [["bbox/face_yolov8m.pt", "segm/person_yolov8m-seg.pt"], ["bbox/face_yolov8m.pt", "none"]]);
+
+  const windows = pruneFace(graph, settings("mouth"));
+  useInstalledDetectors(windows, { required: { detector: [["bbox\\face_yolov8m.pt"]], fallback_detector: [["none", "segm\\person_yolov8m-seg.pt"]] } });
+  assert.deepEqual(detectors(windows), detectors(graph));
+
+  // Not installed, or ComfyUI did not answer: the names stay, and ComfyUI or the setup check reports the missing file.
+  for (const inputs of [{ required: { detector: [["other.pt"]] } }, undefined]) {
+    const unknown = pruneFace(graph, settings("mouth"));
+    useInstalledDetectors(unknown, inputs);
+    assert.deepEqual(detectors(unknown), detectors(graph));
+  }
 });
 
 test("chunk count mirrors H3 Face Fix Chunks", () => {

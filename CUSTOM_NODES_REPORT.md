@@ -16,7 +16,7 @@ Openjutsu uses the custom-node packs in the README's Custom nodes table. Install
 | Object swap ControlNet: `control.api.json` | Context Loop, Fantastic PromptBuilder, VideoHelperSuite, Oneclick Swap, comfyui_controlnet_aux |
 | Check mask: `mask.api.json` | KJNodes, VideoHelperSuite, Oneclick Swap |
 | Find people: `people.api.json` | VideoHelperSuite, Oneclick Swap |
-| Fix faces: `face.api.json` | Context Loop, Fantastic PromptBuilder, VideoHelperSuite, Oneclick Swap, H3-FaceRefine, Impact Pack |
+| Fix faces: `face.api.json` | Context Loop, Fantastic PromptBuilder, VideoHelperSuite, Oneclick Swap, H3-FaceRefine, Impact Pack, Impact Subpack (registers `models/ultralytics`; without it H3 Face Track + Crop offers only a placeholder, not the workflow's `bbox/face_yolov8m.pt`) |
 | Fix colours: `color.api.json` | VideoHelperSuite, Image Detail Contrast, Orion4D_FXMax |
 
 Fix colours removes the detail or tone node when that step is off, so each of its two packs is needed only for its own step. Turning off hat fix or No lip-sync does not remove any pack from swapping.

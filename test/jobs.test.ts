@@ -20,6 +20,7 @@ delete process.env.COMFY_API_KEY;
 const { POST } = await import("../app/api/jobs/route.ts");
 const { GET: getModels } = await import("../app/api/models/route.ts");
 const { GET: getOutput } = await import("../app/api/jobs/[id]/outputs/[outputId]/route.ts");
+const { GET: getJobRoute } = await import("../app/api/jobs/[id]/route.ts");
 const { client } = await import("../lib/comfy.ts");
 // Each submitted job is watched until it ends; end them all so the watchers return.
 test.after(async () => {
@@ -140,6 +141,27 @@ test("outputs are served only for their own job, as video, image or JSON, with n
   response = await fetchOutput(data.id);
   assert.equal(response.headers.get("Content-Type"), "application/json");
   assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
+});
+
+test("a polled job reports its status, and a job the proxy forgot answers 404", async () => {
+  const job = await (await post({ mode: "mask", video: mp4() })).json();
+  const check = (id: string) => getJobRoute(new Request(`http://127.0.0.1:3000/api/jobs/${id}`), { params: Promise.resolve({ id }) });
+
+  let response = await check(job.id);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.equal((await response.json()).status, "queued");
+
+  const video = proxy.output(job.id, "video/mp4", "mp4");
+  proxy.finish(job.id, "succeeded", [video]);
+  const done = await (await check(job.id)).json();
+  assert.equal(done.status, "succeeded");
+  assert.equal(done.video.url, `/api/jobs/${job.id}/outputs/${video.id}`);
+
+  response = await check("forgotten-job");
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error, "This job is no longer available.");
+  assert.equal((await check("http-not-an-id")).status, 400);
 });
 
 test("COMFYUI_URL may end in a slash, and a failed model list is reported instead of skipping the check", async () => {
