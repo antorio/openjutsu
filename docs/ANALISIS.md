@@ -290,7 +290,9 @@ Total model inti sekitar 51 GB. From picture menambah sekitar 30 GB, atau sekita
      - SSE tidak pernah terkirim (koneksi diputus): hasil tetap muncul dari polling, lalu EventSource berhenti reconnect;
      - SSE normal: progres live tetap tampil dan keterangan fallback tidak muncul;
      - job yang dilupakan proxy tampil sebagai "Job no longer available".
-   - Lewat Cloudflare sungguhan belum diuji **[B]**.
+   - Lewat quick tunnel Cloudflare sungguhan, dari workflow CI "Linux setup" (27 November):
+     - **[V]** Cek same-origin app lolos untuk ke-13 mode, dengan header `Origin` seperti browser. Jadi Cloudflare meneruskan `Host` publik dan `X-Forwarded-Proto: https`.
+     - **[B]** Polling-nya sendiri belum diuji di sana, karena CI tidak menjalankan job.
    - From picture memang sejak awal memakai polling.
 2. **Batas upload 100 MB untuk quick tunnel tidak tercantum** di halaman Quick Tunnels. Klaim saya sebelumnya tidak bersumber dan sudah saya koreksi di dokumentasi.
 3. **Seluruh UI ada dalam satu komponen** (`openjutsu.tsx`, 1.534 baris, 58 `useState` di komponen utamanya). Tidak ada state manager dan tidak ada i18n. Ini titik tersulit kalau mau mengubah UI.
@@ -348,7 +350,10 @@ File buatan saya sudah saya perbaiki supaya sesuai tabel ini: komentar di `scrip
 
 ## 10. Yang masih terbuka
 
-- Menjalankan `setup.sh` dan setiap mode di GPU sungguhan (Colab L4 atau RunPod), termasuk instalasi pip pack (insightface, onnxruntime-gpu) dan kecocokan torch.
+- Menjalankan setiap mode di GPU sungguhan (Colab L4 atau RunPod).
+  - **[V]** `setup.sh` sudah lolos di CI Ubuntu 22.04 dengan torch CPU dan `nvidia-smi` tiruan: dari nol (±3 menit tanpa model besar) maupun saat diulang (±15 detik).
+  - **[V]** Semua pip pack, termasuk insightface dan onnxruntime-gpu, ter-install, dan ke-12 custom pack ter-import tanpa error.
+  - **[B]** Yang belum: download model besar, torch CUDA bawaan Colab, dan render.
 - Menguji fallback polling lewat quick tunnel Cloudflare sungguhan (temuan 1); sejauh ini baru diuji dengan tunnel tiruan.
 - Memverifikasi klaim 38 PR bugfix yang relevan sebelum diadopsi.
 - Membaca lisensi MiniMax H3, FLUX 3 Klein, dan SolarRenderer.
